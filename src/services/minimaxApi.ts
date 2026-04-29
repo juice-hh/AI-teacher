@@ -1,8 +1,13 @@
-import OpenAI from 'openai'
 import { SYSTEM_PROMPT } from '../prompts/systemPrompt'
 import type { Message, CardId } from '../types/chat'
 
-export const TOOL_DEFINITION: OpenAI.Chat.ChatCompletionTool = {
+type OAIMessage =
+  | { role: 'system'; content: string }
+  | { role: 'user'; content: string }
+  | { role: 'assistant'; content: string | null; tool_calls?: unknown[] }
+  | { role: 'tool'; content: string; tool_call_id: string }
+
+export const TOOL_DEFINITION = {
   type: 'function',
   function: {
     name: 'show_knowledge_card',
@@ -24,24 +29,14 @@ export const TOOL_DEFINITION: OpenAI.Chat.ChatCompletionTool = {
   },
 }
 
-export function buildMessages(
-  messages: Message[]
-): OpenAI.Chat.ChatCompletionMessageParam[] {
-  const system: OpenAI.Chat.ChatCompletionSystemMessageParam = {
-    role: 'system',
-    content: SYSTEM_PROMPT,
-  }
+export function buildMessages(messages: Message[]): OAIMessage[] {
+  const system: OAIMessage = { role: 'system', content: SYSTEM_PROMPT }
 
-  const rest = messages.map((m): OpenAI.Chat.ChatCompletionMessageParam => {
+  const rest: OAIMessage[] = messages.map(m => {
     if (m.role === 'tool') {
-      return {
-        role: 'tool',
-        content: m.content,
-        tool_call_id: m.toolCallId ?? '',
-      }
+      return { role: 'tool', content: m.content, tool_call_id: m.toolCallId ?? '' }
     }
     if (m.role === 'assistant' && m.toolCallId) {
-      // Reconstruct assistant message with tool_calls for MiniMax
       return {
         role: 'assistant',
         content: m.content.startsWith('[tool_call:') ? null : m.content,
@@ -50,23 +45,18 @@ export function buildMessages(
           type: 'function',
           function: {
             name: 'show_knowledge_card',
-            arguments: JSON.stringify({ card_id: m.content.replace('[tool_call:', '').replace(']', ''), reason: '' }),
+            arguments: JSON.stringify({
+              card_id: m.content.replace('[tool_call:', '').replace(']', ''),
+              reason: '',
+            }),
           },
         }],
-      } as OpenAI.Chat.ChatCompletionAssistantMessageParam
+      }
     }
     return { role: m.role as 'user' | 'assistant', content: m.content }
   })
 
   return [system, ...rest]
-}
-
-export function createClient() {
-  return new OpenAI({
-    apiKey: import.meta.env.VITE_MINIMAX_API_KEY,
-    baseURL: `${window.location.origin}/minimax-api/v1`,
-    dangerouslyAllowBrowser: true,
-  })
 }
 
 export interface AIResponse {
@@ -76,24 +66,38 @@ export interface AIResponse {
 }
 
 export async function sendMessage(messages: Message[]): Promise<AIResponse> {
-  const client = createClient()
-  const response = await client.chat.completions.create({
-    model: 'MiniMax-M2.5',
-    messages: buildMessages(messages),
-    tools: [TOOL_DEFINITION],
-    tool_choice: 'auto',
+  const response = await fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'MiniMax-M2.5',
+      messages: buildMessages(messages),
+      tools: [TOOL_DEFINITION],
+      tool_choice: 'auto',
+    }),
   })
 
-  const choice = response.choices[0]
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({})) as { message?: string; error?: { message?: string } }
+    throw new Error(`${response.status} ${err.error?.message ?? err.message ?? response.statusText}`)
+  }
+
+  const data = await response.json() as {
+    choices: Array<{
+      message: {
+        content?: string
+        tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>
+      }
+    }>
+  }
+
+  const choice = data.choices[0]
   const raw = choice.message.content ?? ''
   const text = raw.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
   const toolCall = choice.message.tool_calls?.[0]
 
   if (toolCall?.function.name === 'show_knowledge_card') {
-    const args = JSON.parse(toolCall.function.arguments) as {
-      card_id: CardId
-      reason: string
-    }
+    const args = JSON.parse(toolCall.function.arguments) as { card_id: CardId; reason: string }
     return { text, cardId: args.card_id, toolCallId: toolCall.id }
   }
 
