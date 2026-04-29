@@ -6,8 +6,7 @@ export const TOOL_DEFINITION: OpenAI.Chat.ChatCompletionTool = {
   type: 'function',
   function: {
     name: 'show_knowledge_card',
-    description:
-      '当检测到学生处于 L1 核心知识缺失时调用，触发前端显示对应互动知识卡片',
+    description: '当检测到学生处于 L1 核心知识缺失时调用，触发前端显示对应互动知识卡片',
     parameters: {
       type: 'object',
       properties: {
@@ -41,6 +40,21 @@ export function buildMessages(
         tool_call_id: m.toolCallId ?? '',
       }
     }
+    if (m.role === 'assistant' && m.toolCallId) {
+      // Reconstruct assistant message with tool_calls for MiniMax
+      return {
+        role: 'assistant',
+        content: m.content.startsWith('[tool_call:') ? null : m.content,
+        tool_calls: [{
+          id: m.toolCallId,
+          type: 'function',
+          function: {
+            name: 'show_knowledge_card',
+            arguments: JSON.stringify({ card_id: m.content.replace('[tool_call:', '').replace(']', ''), reason: '' }),
+          },
+        }],
+      } as OpenAI.Chat.ChatCompletionAssistantMessageParam
+    }
     return { role: m.role as 'user' | 'assistant', content: m.content }
   })
 
@@ -50,7 +64,7 @@ export function buildMessages(
 export function createClient() {
   return new OpenAI({
     apiKey: import.meta.env.VITE_MINIMAX_API_KEY,
-    baseURL: import.meta.env.VITE_MINIMAX_BASE_URL ?? 'https://api.minimax.chat/v1',
+    baseURL: `${window.location.origin}/minimax-api/v1`,
     dangerouslyAllowBrowser: true,
   })
 }
@@ -64,14 +78,15 @@ export interface AIResponse {
 export async function sendMessage(messages: Message[]): Promise<AIResponse> {
   const client = createClient()
   const response = await client.chat.completions.create({
-    model: 'MiniMax-Text-01',
+    model: 'MiniMax-M2.5',
     messages: buildMessages(messages),
     tools: [TOOL_DEFINITION],
     tool_choice: 'auto',
   })
 
   const choice = response.choices[0]
-  const text = choice.message.content ?? ''
+  const raw = choice.message.content ?? ''
+  const text = raw.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
   const toolCall = choice.message.tool_calls?.[0]
 
   if (toolCall?.function.name === 'show_knowledge_card') {

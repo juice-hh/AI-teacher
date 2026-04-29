@@ -41,13 +41,14 @@ export function useChat() {
             })
           }
         }
-      } catch {
+      } catch (err) {
+        console.error('[useChat] API error:', err)
         dispatch({
           type: 'ADD_MESSAGE',
           payload: {
             id: crypto.randomUUID(),
             role: 'assistant',
-            content: '抱歉，我遇到了一点问题，请稍后再试。',
+            content: `抱歉，我遇到了一点问题，请稍后再试。（${err instanceof Error ? err.message : String(err)}）`,
           },
         })
       } finally {

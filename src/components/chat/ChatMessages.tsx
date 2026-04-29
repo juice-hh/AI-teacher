@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import ReactMarkdown from 'react-markdown'
 import type { Message } from '../../types/chat'
 
 interface Props {
@@ -36,7 +37,21 @@ export function ChatMessages({ messages, isLoading }: Props) {
                 : 'bg-slate-100 text-slate-800 rounded-bl-sm'
             }`}
           >
-            {msg.content}
+            {msg.role === 'user' ? (
+              msg.content
+            ) : (
+              <ReactMarkdown
+                components={{
+                  p: ({ children }) => <p className="mb-1 last:mb-0">{children}</p>,
+                  strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+                  ul: ({ children }) => <ul className="list-disc list-inside space-y-0.5 my-1">{children}</ul>,
+                  ol: ({ children }) => <ol className="list-decimal list-inside space-y-0.5 my-1">{children}</ol>,
+                  li: ({ children }) => <li>{children}</li>,
+                }}
+              >
+                {msg.content}
+              </ReactMarkdown>
+            )}
           </div>
         </div>
       ))}
